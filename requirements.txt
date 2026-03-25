@@ -1,0 +1,29 @@
+# Core
+requests>=2.31.0
+python-dotenv>=1.0.0
+anthropic>=0.40.0
+
+# Crypto
+pycryptodome>=3.20.0
+sympy>=1.12
+
+# Forensics / Stego
+Pillow>=10.2.0
+scapy>=2.5.0
+
+# Binary / Pwn
+pwntools>=4.12.0
+
+# Reversing
+angr>=9.2.0
+
+# SMT Solver
+z3-solver>=4.12.0
+
+# Misc
+python-magic-bin>=0.4.14
+beautifulsoup4>=4.12.0
+PyJWT>=2.8.0
+qrcode>=7.4
+pyzbar>=0.1.9
+numpy>=1.26.0
