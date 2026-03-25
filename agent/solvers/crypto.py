@@ -55,44 +55,83 @@ class CryptoSolver(BaseSolver):
 
     # ── Strategies ─────────────────────────────────────────────────────
 
+    def _try_decode_candidates(
+        self, data: str, report: SolveReport
+    ) -> Optional[SolveResult]:
+        """
+        Extract likely encoded substrings from *data* (regex + tokens)
+        and try to decode each one. Returns SolveResult on first flag.
+        """
+        import re
+
+        # Build candidate list: whole text, regex-extracted b64, and tokens
+        candidates = [data.strip()]
+
+        # Extract base64-looking substrings (min 8 chars, valid charset)
+        b64_pattern = r'[A-Za-z0-9+/]{8,}={0,2}'
+        candidates.extend(re.findall(b64_pattern, data))
+
+        # Also add every whitespace-delimited token
+        candidates.extend(data.split())
+
+        # Extract hex-looking substrings
+        hex_pattern = r'(?:0x)?[0-9a-fA-F]{8,}'
+        candidates.extend(re.findall(hex_pattern, data))
+
+        # De-duplicate while preserving order
+        seen = set()
+        unique = []
+        for c in candidates:
+            c = c.strip()
+            if c and c not in seen:
+                seen.add(c)
+                unique.append(c)
+
+        decoders = [
+            ("base64", lambda d: base64.b64decode(d).decode("utf-8", errors="replace")),
+            ("base32", lambda d: base64.b32decode(d.upper()).decode("utf-8", errors="replace")),
+            ("base85", lambda d: base64.b85decode(d).decode("utf-8", errors="replace")),
+            ("hex",    lambda d: bytes.fromhex(d.replace("0x", "")).decode("utf-8", errors="replace")),
+        ]
+
+        for candidate in unique:
+            for dec_name, decoder in decoders:
+                try:
+                    decoded = decoder(candidate)
+                    if not decoded or len(decoded) < 3:
+                        continue
+                    flags = find_flags(decoded)
+                    if flags:
+                        report.log("solve",
+                                   f"{dec_name} decode found flag",
+                                   detail=decoded[:300])
+                        return SolveResult(flag=flags[0])
+
+                    # Try double-decode
+                    for dec_name2, decoder2 in decoders:
+                        try:
+                            double = decoder2(decoded.strip())
+                            if double and len(double) >= 3:
+                                flags = find_flags(double)
+                                if flags:
+                                    report.log("solve",
+                                               f"Double decode ({dec_name}→{dec_name2}) found flag",
+                                               detail=double[:300])
+                                    return SolveResult(flag=flags[0])
+                        except Exception:
+                            pass
+                except Exception:
+                    continue
+
+        return None
+
     def _base64_decode(
         self, info: ChallengeInfo, report: SolveReport
     ) -> Optional[SolveResult]:
         data = self._get_data(info).strip()
         if not data:
             return None
-
-        # Try multiple base decodings
-        decoders = [
-            ("base64", lambda d: base64.b64decode(d).decode("utf-8", errors="replace")),
-            ("base32", lambda d: base64.b32decode(d).decode("utf-8", errors="replace")),
-            ("base85", lambda d: base64.b85decode(d).decode("utf-8", errors="replace")),
-            ("ascii85", lambda d: base64.a85decode(d).decode("utf-8", errors="replace")),
-        ]
-
-        for name, decoder in decoders:
-            try:
-                decoded = decoder(data)
-                flags = find_flags(decoded)
-                if flags:
-                    report.log("solve", f"{name} decode found flag", detail=decoded)
-                    return SolveResult(flag=flags[0])
-
-                # Try double decode
-                try:
-                    double = decoder(decoded.strip())
-                    flags = find_flags(double)
-                    if flags:
-                        report.log("solve", f"Double {name} decode found flag",
-                                   detail=double)
-                        return SolveResult(flag=flags[0])
-                except Exception:
-                    pass
-
-            except Exception:
-                continue
-
-        return None
+        return self._try_decode_candidates(data, report)
 
     def _hex_decode(
         self, info: ChallengeInfo, report: SolveReport
@@ -101,9 +140,10 @@ class CryptoSolver(BaseSolver):
         if not data:
             return None
 
-        # Remove common prefixes and whitespace
-        cleaned = data.replace("0x", "").replace(" ", "").replace("\n", "")
+        import re
 
+        # Try whole text first (cleaned)
+        cleaned = data.replace("0x", "").replace(" ", "").replace("\n", "")
         try:
             decoded = bytes.fromhex(cleaned).decode("utf-8", errors="replace")
             flags = find_flags(decoded)
@@ -112,6 +152,18 @@ class CryptoSolver(BaseSolver):
                 return SolveResult(flag=flags[0])
         except (ValueError, binascii.Error):
             pass
+
+        # Try hex substrings
+        for match in re.findall(r'(?:0x)?([0-9a-fA-F]{8,})', data):
+            try:
+                decoded = bytes.fromhex(match).decode("utf-8", errors="replace")
+                flags = find_flags(decoded)
+                if flags:
+                    report.log("solve", "Hex substring decode found flag",
+                               detail=decoded)
+                    return SolveResult(flag=flags[0])
+            except (ValueError, binascii.Error):
+                pass
 
         return None
 

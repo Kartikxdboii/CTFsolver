@@ -73,6 +73,38 @@ def solve_challenge(
         report.log("solve", f"Solver crashed: {exc}", success=False)
         result = None
 
+    # ── 3b. Fallback: try other solvers if primary failed ──────────────
+    if (not result or not result.flag) and info.confidence < 0.8:
+        # Prioritised fallback order
+        fallbacks = ["crypto", "misc", "forensics", "stego"]
+        tried = {info.category}
+
+        for fb_cat in fallbacks:
+            if fb_cat in tried:
+                continue
+            tried.add(fb_cat)
+
+            fb_cls = SOLVERS.get(fb_cat)
+            if fb_cls is None:
+                continue
+
+            fb_solver = fb_cls()
+            report.log("route",
+                       f"Fallback: trying {fb_solver.__class__.__name__}")
+
+            try:
+                fb_result = fb_solver.solve(info, report, flag_format=flag_format)
+            except Exception as exc:
+                report.log("solve",
+                           f"Fallback solver {fb_cat} crashed: {exc}",
+                           success=False)
+                continue
+
+            if fb_result and fb_result.flag:
+                result = fb_result
+                report.category = fb_cat
+                break
+
     # ── 4. Validate ────────────────────────────────────────────────────
     if result and result.flag:
         report.log("validate", f"Flag found: `{result.flag}`")
