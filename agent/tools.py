@@ -67,11 +67,29 @@ def register(name: str, command: str,
 
 
 def is_available(name: str) -> bool:
-    """Check whether a tool is installed and reachable on PATH."""
+    """Check whether a tool is installed and reachable on PATH or via WSL."""
     info = _REGISTRY.get(name)
     if info is None:
         return False
-    return shutil.which(info.command) is not None
+        
+    # 1. Check native Windows/Linux PATH
+    if shutil.which(info.command) is not None:
+        return True
+        
+    # 2. Check WSL fallback on Windows
+    if platform.system() == "Windows":
+        try:
+            # Check if command exists in WSL (returns 0 if found)
+            proc = subprocess.run(
+                ["wsl", "which", info.command],
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            return proc.returncode == 0
+        except FileNotFoundError:
+            pass
+            
+    return False
 
 
 def list_tools() -> dict[str, bool]:
@@ -89,6 +107,7 @@ def run(
 ) -> ToolResult:
     """
     Execute a registered tool with the given arguments.
+    Routes through WSL automatically on Windows if necessary.
 
     Returns a ToolResult with captured stdout/stderr, truncated
     to MAX_OUTPUT_SIZE to avoid memory issues.
@@ -104,11 +123,17 @@ def run(
     if not is_available(name):
         return ToolResult(
             tool=name, command=info.command, returncode=-1,
-            stdout="", stderr=f"Tool '{name}' ({info.command}) not found on PATH.",
+            stdout="", stderr=f"Tool '{name}' ({info.command}) not found on PATH or WSL.",
             available=False,
         )
 
+    # Determine command array (native vs WSL)
     cmd = [info.command] + args
+    
+    if platform.system() == "Windows" and shutil.which(info.command) is None:
+        # Route through WSL. WSL automatically translates Windows paths 
+        # in the working directory to /mnt/c/... for the Linux environment.
+        cmd = ["wsl"] + cmd
     cmd_str = " ".join(cmd)
     _timeout = timeout or TOOL_TIMEOUT
 
